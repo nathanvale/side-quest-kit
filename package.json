@@ -1,6 +1,6 @@
 {
 	"name": "@side-quest/kit",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Kit CLI integration for intelligent code search - MCP server with 7 tools for token-efficient codebase navigation",
 	"author": {
 		"name": "Nathan Vale",
