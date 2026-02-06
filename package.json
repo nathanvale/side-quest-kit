@@ -26,12 +26,12 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/nathanvale/side-quest-clone.git"
+		"url": "git+https://github.com/nathanvale/side-quest-kit.git"
 	},
 	"bugs": {
-		"url": "https://github.com/nathanvale/side-quest-clone/issues"
+		"url": "https://github.com/nathanvale/side-quest-kit/issues"
 	},
-	"homepage": "https://github.com/nathanvale/side-quest-clone#readme",
+	"homepage": "https://github.com/nathanvale/side-quest-kit#readme",
 	"keywords": [
 		"kit",
 		"code-search",
