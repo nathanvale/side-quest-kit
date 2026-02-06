@@ -135,7 +135,10 @@ describe('validatePath', () => {
 	describe('path traversal prevention', () => {
 		test('allows paths within base directory', () => {
 			const base = homedir()
-			const result = validatePath('~/code', { basePath: base })
+			const result = validatePath('~/code', {
+				basePath: base,
+				mustExist: false,
+			})
 			expect(result.valid).toBe(true)
 		})
 

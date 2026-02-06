@@ -9,10 +9,8 @@
 	"license": "MIT",
 	"type": "module",
 	"main": "./src/mcp/index.ts",
-	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
 		"./package.json": "./package.json"
