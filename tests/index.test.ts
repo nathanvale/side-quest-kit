@@ -2,30 +2,26 @@ import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { createTempDir, pathExistsSync, removeDirSync } from '@side-quest/core/fs'
 import {
-	// Logger
-	createCorrelationId,
 	createErrorFromOutput,
-	DEFAULT_MAX_RESULTS,
-	DEFAULT_TOP_K,
 	detectErrorType,
 	ERROR_MESSAGES,
+	isSemanticUnavailableError,
+	KitError,
+	KitErrorType,
+	SEMANTIC_INSTALL_HINT,
+} from '../src/lib/errors.js'
+import { getSemanticCacheDir } from '../src/lib/kit-wrapper.js'
+import { createCorrelationId, logDir, logFile } from '../src/lib/logger.js'
+import {
+	DEFAULT_MAX_RESULTS,
+	DEFAULT_TOP_K,
 	GREP_TIMEOUT,
 	getDefaultKitPath,
-	getSemanticCacheDir,
 	isError,
-	isSemanticUnavailableError,
 	KIT_DEFAULT_PATH_ENV,
-	KitError,
-	// Errors
-	KitErrorType,
-	logDir,
-	logFile,
-	// Types
 	ResponseFormat,
-	SEMANTIC_INSTALL_HINT,
 	SEMANTIC_TIMEOUT,
-	SYMBOLS_TIMEOUT,
-} from '../src/lib/index'
+} from '../src/lib/types.js'
 
 // ============================================================================
 // Types Tests
@@ -128,7 +124,6 @@ describe('types', () => {
 		test('timeout values are reasonable', () => {
 			expect(GREP_TIMEOUT).toBe(30000)
 			expect(SEMANTIC_TIMEOUT).toBe(60000)
-			expect(SYMBOLS_TIMEOUT).toBe(45000)
 		})
 
 		test('default result limits are set', () => {

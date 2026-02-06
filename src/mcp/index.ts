@@ -31,10 +31,13 @@ import {
 	executeIndexFind,
 	executeIndexOverview,
 	executeIndexPrime,
+	executeKitGrep,
+	executeKitSemantic,
 	executeKitUsages,
 	formatIndexFindResults,
 	formatIndexOverviewResults,
 	formatIndexPrimeResults,
+	formatSemanticResults,
 	ResponseFormat,
 	SearchMode,
 	validateAstSearchInputs,
@@ -42,6 +45,7 @@ import {
 	validateSemanticInputs,
 	validateUsagesInputs,
 } from '../lib/index.js'
+import { findGitRootSync } from '../lib/utils/git.js'
 
 // ============================================================================
 // Logger Adapter
@@ -62,18 +66,6 @@ function createLoggerAdapter(subsystem: string) {
 			log.error({ message, ...properties }, subsystem)
 		},
 	}
-}
-
-// ============================================================================
-// Helper: get git root for Kit CLI path arg
-// ============================================================================
-
-function getGitRoot(): string | undefined {
-	const result = spawnSyncCollect(['git', 'rev-parse', '--show-toplevel'])
-	if (result.exitCode === 0 && result.stdout.trim()) {
-		return result.stdout.trim()
-	}
-	return undefined
 }
 
 // ============================================================================
@@ -294,34 +286,92 @@ Requires Kit CLI: uv tool install cased-kit`,
 			}
 
 			if (mode === 'callers_only') {
-				// Validate symbol for callers mode (simple check - non-empty, no shell chars)
+				// Validate symbol for callers mode (allowlist valid identifiers)
 				const trimmed = symbol.trim()
 				if (!trimmed) {
 					throw new Error('symbol is required and cannot be empty')
 				}
-				if (/[;&|`$()]/.test(trimmed)) {
-					throw new Error('symbol contains forbidden characters')
+				if (!/^[a-zA-Z_$][a-zA-Z0-9_$.<>#]*$/.test(trimmed)) {
+					throw new Error(
+						'symbol must be a valid identifier (letters, numbers, _, $, ., <, >, #)',
+					)
 				}
 
-				// Use CLI callers command -- finds call sites only
-				const formatStr = format === ResponseFormat.JSON ? 'json' : 'markdown'
-				const result = spawnSyncCollect(
-					[
-						'bun',
-						'run',
-						`${__dirname}/../cli.ts`,
-						'callers',
-						symbol,
-						'--format',
-						formatStr,
-					],
-					{ env: { PATH: buildEnhancedPath() } },
-				)
+				// Call library function directly instead of spawning CLI
+				// Uses kit grep to find all occurrences, then filters to call sites only
+				const grepResult = executeKitGrep({
+					pattern: trimmed,
+					path,
+					caseSensitive: true,
+					maxResults: 500,
+				})
 
-				if (result.exitCode !== 0) {
-					throw new Error(result.stderr || 'Failed to find callers')
+				// Handle error result
+				if ('error' in grepResult) {
+					throw new Error(
+						`${grepResult.error}${grepResult.hint ? `\nHint: ${grepResult.hint}` : ''}`,
+					)
 				}
-				return result.stdout
+
+				// Filter out definition patterns to show only call sites
+				// Heuristics: exclude lines that look like function declarations or assignments
+				const definitionPatterns = [
+					/^function\s+/, // function declarations
+					/^export\s+(async\s+)?function\s+/, // exported functions
+					/^(const|let|var)\s+\w+\s*=\s*function/, // function expressions
+					/^(const|let|var)\s+\w+\s*=\s*\(/, // arrow functions
+					/^(const|let|var)\s+\w+\s*=\s*async\s*\(/, // async arrow functions
+					/^async\s+function\s+/, // async function declarations
+				]
+
+				const callSites = grepResult.matches.filter((match) => {
+					const content = match.content.trim()
+					return !definitionPatterns.some((pattern) => pattern.test(content))
+				})
+
+				// Build callers result in same format as CLI command
+				const callersResult = {
+					functionName: trimmed,
+					callSites: callSites.map((m) => ({
+						file: m.file,
+						line: m.line || 0,
+						context: m.content,
+					})),
+					count: callSites.length,
+				}
+
+				// Format output
+				if (format === ResponseFormat.JSON) {
+					return JSON.stringify(callersResult, null, 2)
+				}
+
+				// Markdown format
+				let markdown = `## Call Sites\n\n`
+				markdown += `**Function:** \`${trimmed}\`\n`
+				markdown += `**Call sites found:** ${callersResult.count}\n\n`
+
+				if (callersResult.count === 0) {
+					markdown += '_No call sites found_\n'
+				} else {
+					// Group by file
+					const byFile = new Map<string, typeof callSites>()
+					for (const site of callSites) {
+						if (!byFile.has(site.file)) {
+							byFile.set(site.file, [])
+						}
+						byFile.get(site.file)?.push(site)
+					}
+
+					for (const [file, sites] of byFile.entries()) {
+						markdown += `### ${file}\n\n`
+						for (const site of sites) {
+							markdown += `- Line ${site.line || '?'}: \`${site.content.trim()}\`\n`
+						}
+						markdown += '\n'
+					}
+				}
+
+				return markdown
 			}
 
 			// Validate inputs for usages modes
@@ -455,37 +505,28 @@ To enable: uv tool install 'cased-kit[ml]'`,
 				throw new Error(validation.errors.join('; '))
 			}
 
-			const formatStr = format === ResponseFormat.JSON ? 'json' : 'markdown'
-
-			const cmd = [
-				'run',
-				`${__dirname}/../cli.ts`,
-				'search',
-				validation.validated!.query,
-				'--format',
-				formatStr,
-			]
-
-			if (validation.validated!.path) {
-				cmd.push('--path', validation.validated!.path)
-			}
-			cmd.push('--top-k', String(validation.validated!.topK))
-			if (chunk_by) {
-				cmd.push('--chunk-by', chunk_by)
-			}
-			if (build_index) {
-				cmd.push('--build-index')
-			}
-
-			const result = spawnSyncCollect(['bun', ...cmd], {
-				env: { PATH: buildEnhancedPath() },
+			// Call library function directly instead of spawning CLI
+			const result = executeKitSemantic({
+				query: validation.validated!.query,
+				path: validation.validated!.path,
+				topK: validation.validated!.topK,
+				chunkBy: chunk_by,
+				buildIndex: build_index,
 			})
 
-			if (result.exitCode !== 0) {
-				throw new Error(result.stderr || 'Semantic search failed')
+			// Handle error result
+			if ('error' in result) {
+				throw new Error(
+					`${result.error}${result.hint ? `\nHint: ${result.hint}` : ''}`,
+				)
 			}
 
-			return result.stdout
+			// Format result using existing formatter
+			const responseFormat =
+				format === ResponseFormat.JSON
+					? ResponseFormat.JSON
+					: ResponseFormat.MARKDOWN
+			return formatSemanticResults(result, responseFormat)
 		},
 		{
 			toolName: 'kit_semantic',
@@ -676,12 +717,23 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				path?: string
 			}
 
-			// Validate file_path - no traversal, non-empty
+			// Validate file_path - no traversal, non-empty, no null bytes, relative only
 			const fileTrimmed = file_path.trim()
-			if (!fileTrimmed || fileTrimmed.includes('..')) {
-				throw new Error(
-					'Invalid file_path: cannot be empty or contain path traversal (..)',
-				)
+			if (!fileTrimmed) {
+				throw new Error('file_path is required')
+			}
+			// Reject null bytes
+			if (fileTrimmed.includes('\x00')) {
+				throw new Error('file_path contains invalid characters')
+			}
+			// Reject absolute paths
+			if (fileTrimmed.startsWith('/') || fileTrimmed.startsWith('\\')) {
+				throw new Error('file_path must be a relative path')
+			}
+			// Normalize and check for directory traversal
+			const normalized = fileTrimmed.replace(/\\/g, '/')
+			if (normalized.includes('..')) {
+				throw new Error('file_path must not contain directory traversal')
 			}
 			if (line < 1) {
 				throw new Error('line must be a positive integer')
@@ -695,10 +747,10 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				}
 			}
 
-			const repoPath = path || getGitRoot() || process.cwd()
+			const repoPath = path || findGitRootSync() || process.cwd()
 
 			const result = spawnSyncCollect(
-				['kit', 'context', repoPath, file_path, String(line)],
+				['kit', 'context', repoPath, '--', file_path, String(line)],
 				{
 					env: { PATH: buildEnhancedPath() },
 				},
@@ -817,12 +869,23 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				path?: string
 			}
 
-			// Validate file_path - no traversal, non-empty
+			// Validate file_path - no traversal, non-empty, no null bytes, relative only
 			const fileTrimmed = file_path.trim()
-			if (!fileTrimmed || fileTrimmed.includes('..')) {
-				throw new Error(
-					'Invalid file_path: cannot be empty or contain path traversal (..)',
-				)
+			if (!fileTrimmed) {
+				throw new Error('file_path is required')
+			}
+			// Reject null bytes
+			if (fileTrimmed.includes('\x00')) {
+				throw new Error('file_path contains invalid characters')
+			}
+			// Reject absolute paths
+			if (fileTrimmed.startsWith('/') || fileTrimmed.startsWith('\\')) {
+				throw new Error('file_path must be a relative path')
+			}
+			// Normalize and check for directory traversal
+			const normalized = fileTrimmed.replace(/\\/g, '/')
+			if (normalized.includes('..')) {
+				throw new Error('file_path must not contain directory traversal')
 			}
 
 			// Validate max_lines bounds (1-500)
@@ -838,15 +901,17 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				}
 			}
 
-			const repoPath = path || getGitRoot() || process.cwd()
+			const repoPath = path || findGitRootSync() || process.cwd()
 
-			const cmd =
-				strategy === 'symbols'
-					? ['kit', 'chunk-symbols', repoPath, file_path]
-					: ['kit', 'chunk-lines', repoPath, file_path]
-
-			if (strategy === 'lines' && max_lines) {
-				cmd.push('-n', String(max_lines))
+			let cmd: string[]
+			if (strategy === 'symbols') {
+				cmd = ['kit', 'chunk-symbols', repoPath, '--', file_path]
+			} else {
+				cmd = ['kit', 'chunk-lines', repoPath]
+				if (max_lines) {
+					cmd.push('-n', String(max_lines))
+				}
+				cmd.push('--', file_path)
 			}
 
 			const result = spawnSyncCollect(cmd, {

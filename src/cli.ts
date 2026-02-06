@@ -25,14 +25,6 @@ Usage:
   bun run src/cli.ts overview <file> [--format md|json]
   bun run src/cli.ts search <query> [--path <dir>] [--top-k N] [--chunk-by symbols|lines] [--build-index] [--format md|json]
   bun run src/cli.ts callers <function> [--format md|json]
-  bun run src/cli.ts calls <function> [--format md|json]
-  bun run src/cli.ts deps <file> [--format md|json]
-  bun run src/cli.ts dead [path] [--format md|json]
-  bun run src/cli.ts blast <file:line|symbol> [--format md|json]
-  bun run src/cli.ts api <directory> [--format md|json]
-  bun run src/cli.ts stats [--format md|json]
-  bun run src/cli.ts commit [--dry-run] [--model <model>] [--format md|json]
-  bun run src/cli.ts summarize <pr-url> [--update-pr-body] [--model <model>] [--format md|json]
 
 Commands:
   prime       Generate/refresh PROJECT_INDEX.json
@@ -55,34 +47,6 @@ Commands:
 
   callers     Find who calls a function (call sites)
               Args: <function> - Function name to analyze
-
-  calls       Find what a function calls (dependencies)
-              Args: <function> - Function name to analyze
-
-  deps        Show import/export relationships for a file
-              Args: <file> - File path to analyze
-
-  dead        Find unused exports (dead code detection)
-              Args: [path] - Optional directory to scope search
-
-  blast       Blast radius analysis (multi-level impact)
-              Args: <file:line|symbol> - File location or symbol name
-
-  api         List module public API (all exports)
-              Args: <directory> - Directory path to analyze
-
-  stats       Codebase health metrics and overview
-
-  grep        Fast text search across repository files
-              Args: <pattern> - Text or regex pattern to search for
-              Options: --path, --include, --exclude, --case-insensitive, --max-results, --directory
-
-  commit      Generate AI commit message from staged changes
-              Options: --dry-run (default: true), --model <model>
-
-  summarize   Generate PR summary using Kit CLI
-              Args: <pr-url> - GitHub PR URL (https://github.com/owner/repo/pull/123)
-              Options: --update-pr-body (update PR description), --model <model> (override LLM)
 
 Options:
   --format <type>   Output format: "md" (default) or "json"
@@ -110,24 +74,6 @@ Examples:
 
   # Find callers with JSON output
   bun run src/cli.ts callers executeFind --format json
-
-  # Check codebase stats
-  bun run src/cli.ts stats
-
-  # Generate commit message (dry run)
-  bun run src/cli.ts commit
-
-  # Actually commit
-  bun run src/cli.ts commit --dry-run=false
-
-  # Use specific model
-  bun run src/cli.ts commit --model claude-sonnet-4-20250514
-
-  # Generate PR summary
-  bun run src/cli.ts summarize https://github.com/owner/repo/pull/123
-
-  # Update PR body with summary
-  bun run src/cli.ts summarize https://github.com/owner/repo/pull/123 --update-pr-body true
 `)
 }
 
@@ -207,116 +153,6 @@ async function main(): Promise<void> {
 				}
 				const { executeCallers } = await import('./lib/commands/callers')
 				await executeCallers(functionName, format)
-				break
-			}
-
-			case 'calls': {
-				const functionName = positional[0]
-				if (!functionName) {
-					console.error('Error: <function> required for calls command')
-					console.error('Usage: bun run src/cli.ts calls <function>')
-					process.exit(1)
-				}
-				const { executeCalls } = await import('./lib/commands/calls')
-				await executeCalls(functionName, format)
-				break
-			}
-
-			case 'deps': {
-				const file = positional[0]
-				if (!file) {
-					console.error('Error: <file> required for deps command')
-					console.error('Usage: bun run src/cli.ts deps <file>')
-					process.exit(1)
-				}
-				const { executeDeps } = await import('./lib/commands/deps')
-				await executeDeps(file, format)
-				break
-			}
-
-			case 'dead': {
-				const path = positional[0] // Optional
-				const { executeDead } = await import('./lib/commands/dead')
-				await executeDead(path, format)
-				break
-			}
-
-			case 'blast': {
-				const target = positional[0]
-				if (!target) {
-					console.error('Error: <file:line|symbol> required for blast command')
-					console.error('Usage: bun run src/cli.ts blast <file:line|symbol>')
-					process.exit(1)
-				}
-				const { executeBlast } = await import('./lib/commands/blast')
-				await executeBlast(target, format)
-				break
-			}
-
-			case 'api': {
-				const directory = positional[0]
-				if (!directory) {
-					console.error('Error: <directory> required for api command')
-					console.error('Usage: bun run src/cli.ts api <directory>')
-					process.exit(1)
-				}
-				const { executeApi } = await import('./lib/commands/api')
-				await executeApi(directory, format)
-				break
-			}
-
-			case 'stats': {
-				const { executeStats } = await import('./lib/commands/stats')
-				await executeStats(format)
-				break
-			}
-
-			case 'commit': {
-				const dryRun = flags['dry-run'] !== 'false' // Default to true (safe)
-				const model = flags.model as string | undefined
-				const { executeCommit } = await import('./lib/commands/commit')
-				await executeCommit(dryRun, model, format)
-				break
-			}
-
-			case 'grep': {
-				const pattern = positional[0]
-				if (!pattern) {
-					console.error('Error: <pattern> required for grep command')
-					console.error('Usage: bun run src/cli.ts grep <pattern> [options]')
-					process.exit(1)
-				}
-				const { executeGrep } = await import('./lib/commands/grep')
-
-				// Parse options from flags
-				const options = {
-					path: flags.path,
-					include: flags.include,
-					exclude: flags.exclude,
-					caseSensitive: flags['case-insensitive'] !== 'true',
-					maxResults: flags['max-results']
-						? Number.parseInt(flags['max-results'], 10)
-						: undefined,
-					directory: flags.directory,
-				}
-
-				await executeGrep(pattern, format, options)
-				break
-			}
-
-			case 'summarize': {
-				const prUrl = positional[0]
-				if (!prUrl) {
-					console.error('Error: <pr-url> required for summarize command')
-					console.error(
-						'Usage: bun run src/cli.ts summarize <pr-url> [--update-pr-body] [--model <model>]',
-					)
-					process.exit(1)
-				}
-				const updatePrBody = flags['update-pr-body'] === 'true'
-				const model = flags.model
-				const { executeSummarize } = await import('./lib/commands/summarize')
-				await executeSummarize(prUrl, updatePrBody, model, format)
 				break
 			}
 
