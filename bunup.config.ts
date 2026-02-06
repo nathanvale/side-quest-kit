@@ -4,7 +4,8 @@ export default defineConfig({
 	entry: './src/index.ts',
 	outDir: './dist',
 	format: 'esm',
-	dts: true,
+	dts: false,
 	clean: true,
 	splitting: false,
+	external: ['@side-quest/core', 'web-tree-sitter', 'tree-sitter-wasms'],
 })

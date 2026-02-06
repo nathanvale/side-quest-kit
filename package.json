@@ -4,11 +4,11 @@
 	"description": "Kit CLI integration for intelligent code search - MCP server with 7 tools for token-efficient codebase navigation",
 	"author": {
 		"name": "Nathan Vale",
-		"url": "https://github.com/nathanvale"
+		"email": "hi@nathanvale.com"
 	},
 	"license": "MIT",
 	"type": "module",
-	"main": "./dist/index.js",
+	"main": "./src/mcp/index.ts",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
@@ -19,6 +19,7 @@
 	},
 	"files": [
 		"dist/**",
+		"src/mcp/**",
 		"README.md",
 		"LICENSE",
 		"CHANGELOG.md"
@@ -32,9 +33,13 @@
 	},
 	"homepage": "https://github.com/nathanvale/side-quest-clone#readme",
 	"keywords": [
-		"typescript",
-		"bun",
-		"biome"
+		"kit",
+		"code-search",
+		"mcp",
+		"semantic-search",
+		"ast-search",
+		"cased-kit",
+		"claude-code"
 	],
 	"engines": {
 		"node": ">=22.20"
@@ -80,7 +85,11 @@
 		"version:pre": "changeset version",
 		"watch:types": "tsc -p tsconfig.eslint.json --noEmit --watch"
 	},
-	"dependencies": {},
+	"dependencies": {
+		"@side-quest/core": "^0.1.1",
+		"tree-sitter-wasms": "^0.1.13",
+		"web-tree-sitter": "^0.25.10"
+	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "^0.18.2",
 		"@biomejs/biome": "^2.3.7",
@@ -101,5 +110,8 @@
 		"*.{ts,tsx,js,jsx,mts,cts,json}": [
 			"biome check --write"
 		]
+	},
+	"bin": {
+		"side-quest-kit": "./src/mcp/index.ts"
 	}
 }

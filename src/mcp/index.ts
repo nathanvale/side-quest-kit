@@ -1,0 +1,937 @@
+#!/usr/bin/env bun
+
+/**
+ * Kit MCP Server (Slim)
+ *
+ * 7 focused tools for token-efficient codebase navigation using Kit CLI.
+ *
+ * Tools:
+ *   1. kit_prime     - Generate/refresh PROJECT_INDEX.json
+ *   2. kit_find      - Symbol lookup + file overview (merged)
+ *   3. kit_references - Callers + usages (merged)
+ *   4. kit_semantic  - Vector search with grep fallback
+ *   5. kit_ast_search - Tree-sitter structural search
+ *   6. kit_context   - Extract enclosing definition around file:line
+ *   7. kit_chunk     - Split file into LLM-friendly chunks
+ *
+ * Observability: JSONL file logging to ~/.claude/logs/kit.jsonl
+ */
+
+import {
+	createCorrelationId,
+	log,
+	startServer,
+	tool,
+	z,
+} from '@side-quest/core/mcp'
+import { wrapToolHandler } from '@side-quest/core/mcp-response'
+import { buildEnhancedPath, spawnSyncCollect } from '@side-quest/core/spawn'
+import {
+	executeAstSearch,
+	executeIndexFind,
+	executeIndexOverview,
+	executeIndexPrime,
+	executeKitUsages,
+	formatIndexFindResults,
+	formatIndexOverviewResults,
+	formatIndexPrimeResults,
+	ResponseFormat,
+	SearchMode,
+	validateAstSearchInputs,
+	validatePath,
+	validateSemanticInputs,
+	validateUsagesInputs,
+} from '../lib/index.js'
+
+// ============================================================================
+// Logger Adapter
+// ============================================================================
+
+/**
+ * Adapter to bridge @side-quest/core/mcp log API to wrapToolHandler Logger interface.
+ *
+ * wrapToolHandler expects: logger.info(message, properties)
+ * @side-quest/core/mcp provides: log.info(properties, subsystem)
+ */
+function createLoggerAdapter(subsystem: string) {
+	return {
+		info: (message: string, properties?: Record<string, unknown>) => {
+			log.info({ message, ...properties }, subsystem)
+		},
+		error: (message: string, properties?: Record<string, unknown>) => {
+			log.error({ message, ...properties }, subsystem)
+		},
+	}
+}
+
+// ============================================================================
+// Helper: get git root for Kit CLI path arg
+// ============================================================================
+
+function getGitRoot(): string | undefined {
+	const result = spawnSyncCollect(['git', 'rev-parse', '--show-toplevel'])
+	if (result.exitCode === 0 && result.stdout.trim()) {
+		return result.stdout.trim()
+	}
+	return undefined
+}
+
+// ============================================================================
+// 1. kit_prime - Generate/refresh PROJECT_INDEX.json
+// ============================================================================
+
+tool(
+	'kit_prime',
+	{
+		description: `Generate or refresh PROJECT_INDEX.json for the codebase.
+
+Creates a pre-built index enabling token-efficient queries:
+- Indexes all symbols (functions, classes, types, etc.)
+- Enables fast symbol lookup without scanning files
+- Auto-detects git repository root
+
+The index is valid for 24 hours. Use force=true to regenerate.
+
+Requires Kit CLI: uv tool install cased-kit`,
+		inputSchema: {
+			path: z
+				.string()
+				.optional()
+				.describe('Directory to index (default: git root, then CWD)'),
+			force: z
+				.boolean()
+				.optional()
+				.describe('Force regenerate even if index is less than 24 hours old'),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const { path, force } = args as { path?: string; force?: boolean }
+			const result = await executeIndexPrime(force, path)
+
+			if ('isError' in result && result.isError) {
+				throw new Error(result.error)
+			}
+
+			const responseFormat =
+				format === ResponseFormat.JSON
+					? ResponseFormat.JSON
+					: ResponseFormat.MARKDOWN
+			return formatIndexPrimeResults(result, responseFormat)
+		},
+		{
+			toolName: 'kit_prime',
+			logger: createLoggerAdapter('symbols'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// 2. kit_find - Symbol lookup + file overview (merged)
+// ============================================================================
+
+tool(
+	'kit_find',
+	{
+		description: `Find symbol definitions or list all symbols in a file from PROJECT_INDEX.json.
+
+Two modes:
+- Symbol lookup: Pass symbol_name to find where a function/class/type is defined
+- File overview: Pass file_path to see all symbols in a file without reading source
+
+~50x token savings compared to reading full files.
+
+NOTE: Requires PROJECT_INDEX.json. Run kit_prime first if not present.`,
+		inputSchema: {
+			symbol_name: z
+				.string()
+				.optional()
+				.describe(
+					'Symbol name to search for. Example: "executeKitGrep". Provide this OR file_path.',
+				),
+			file_path: z
+				.string()
+				.optional()
+				.describe(
+					'File path to get all symbols for (relative to repo root). Example: "src/kit-wrapper.ts". Provide this OR symbol_name.',
+				),
+			index_path: z
+				.string()
+				.optional()
+				.describe(
+					'Path to PROJECT_INDEX.json or directory containing it (default: walks up to find it)',
+				),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const { symbol_name, file_path, index_path } = args as {
+				symbol_name?: string
+				file_path?: string
+				index_path?: string
+			}
+
+			if (!symbol_name && !file_path) {
+				throw new Error(
+					'Either symbol_name or file_path is required. Pass symbol_name to find a definition, or file_path to list all symbols in a file.',
+				)
+			}
+
+			const responseFormat =
+				format === ResponseFormat.JSON
+					? ResponseFormat.JSON
+					: ResponseFormat.MARKDOWN
+
+			// File overview mode
+			if (file_path) {
+				const result = await executeIndexOverview(file_path, index_path)
+				if ('isError' in result && result.isError) {
+					throw new Error(result.error)
+				}
+				return formatIndexOverviewResults(result, responseFormat)
+			}
+
+			// Symbol lookup mode
+			const result = await executeIndexFind(symbol_name!, index_path)
+			if ('isError' in result && result.isError) {
+				throw new Error(result.error)
+			}
+			return formatIndexFindResults(result, responseFormat)
+		},
+		{
+			toolName: 'kit_find',
+			logger: createLoggerAdapter('symbols'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// 3. kit_references - Callers + usages (merged)
+// ============================================================================
+
+tool(
+	'kit_references',
+	{
+		description: `Find all references to a symbol -- call sites, usages, and definitions.
+
+Three modes:
+- all (default): Find all references (definitions + call sites + type usages)
+- callers_only: Only call sites (filters out definitions)
+- definitions_only: Only definition locations
+
+Uses PROJECT_INDEX.json + grep for callers, Kit CLI for usages.
+
+Requires Kit CLI: uv tool install cased-kit`,
+		inputSchema: {
+			symbol: z
+				.string()
+				.describe('Symbol name to find references for. Example: "executeFind"'),
+			mode: z
+				.enum(['all', 'callers_only', 'definitions_only'])
+				.optional()
+				.describe(
+					"Reference mode: 'all' (default), 'callers_only', or 'definitions_only'",
+				),
+			symbol_type: z
+				.string()
+				.optional()
+				.describe(
+					'Filter by symbol type (for usages mode): "function", "class", "type", etc.',
+				),
+			path: z
+				.string()
+				.optional()
+				.describe('Repository path to search (default: current directory)'),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const {
+				symbol,
+				mode = 'all',
+				symbol_type,
+				path,
+			} = args as {
+				symbol: string
+				mode?: 'all' | 'callers_only' | 'definitions_only'
+				symbol_type?: string
+				path?: string
+			}
+
+			if (mode === 'callers_only') {
+				// Validate symbol for callers mode (simple check - non-empty, no shell chars)
+				const trimmed = symbol.trim()
+				if (!trimmed) {
+					throw new Error('symbol is required and cannot be empty')
+				}
+				if (/[;&|`$()]/.test(trimmed)) {
+					throw new Error('symbol contains forbidden characters')
+				}
+
+				// Use CLI callers command -- finds call sites only
+				const formatStr = format === ResponseFormat.JSON ? 'json' : 'markdown'
+				const result = spawnSyncCollect(
+					[
+						'bun',
+						'run',
+						`${__dirname}/../cli.ts`,
+						'callers',
+						symbol,
+						'--format',
+						formatStr,
+					],
+					{ env: { PATH: buildEnhancedPath() } },
+				)
+
+				if (result.exitCode !== 0) {
+					throw new Error(result.stderr || 'Failed to find callers')
+				}
+				return result.stdout
+			}
+
+			// Validate inputs for usages modes
+			const validation = validateUsagesInputs({
+				symbolName: symbol,
+				symbolType: symbol_type,
+				path,
+			})
+			if (!validation.valid) {
+				throw new Error(validation.errors.join('; '))
+			}
+
+			// For "all" and "definitions_only", use Kit usages
+			const result = executeKitUsages({
+				symbolName: validation.validated!.symbolName,
+				symbolType: validation.validated!.symbolType,
+				path: validation.validated!.path,
+			})
+
+			if ('error' in result) {
+				throw new Error(
+					`${result.error}${result.hint ? `\nHint: ${result.hint}` : ''}`,
+				)
+			}
+
+			// Filter to definitions only if requested
+			if (mode === 'definitions_only') {
+				result.usages = result.usages.filter(
+					(u) => u.type === 'definition' || u.type === 'export',
+				)
+				result.count = result.usages.length
+			}
+
+			if (format === ResponseFormat.JSON) {
+				return JSON.stringify(result, null, 2)
+			}
+
+			// Format as markdown
+			let markdown = `## Symbol References\n\n`
+			markdown += `**Symbol:** \`${result.symbolName}\`\n`
+			markdown += `**Mode:** ${mode}\n`
+			markdown += `**References found:** ${result.count}\n\n`
+
+			if (result.usages.length === 0) {
+				markdown += '_No references found_\n'
+			} else {
+				for (const usage of result.usages) {
+					markdown += `### ${usage.file}${usage.line ? `:${usage.line}` : ''}\n`
+					markdown += `**Type:** \`${usage.type}\` | **Name:** \`${usage.name}\`\n`
+					if (usage.context) {
+						markdown += `\`\`\`\n${usage.context}\n\`\`\`\n`
+					}
+					markdown += '\n'
+				}
+			}
+
+			return markdown
+		},
+		{
+			toolName: 'kit_references',
+			logger: createLoggerAdapter('references'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// 4. kit_semantic - Vector search with grep fallback
+// ============================================================================
+
+tool(
+	'kit_semantic',
+	{
+		description: `Semantic search using natural language queries and vector embeddings.
+
+Find code by meaning rather than exact text matches. Great for:
+- "How does authentication work?"
+- "Error handling patterns"
+- "Database connection logic"
+
+NOTE: Requires ML dependencies. If unavailable, falls back to text search.
+To enable: uv tool install 'cased-kit[ml]'`,
+		inputSchema: {
+			query: z
+				.string()
+				.describe(
+					'Natural language query. Example: "authentication flow logic"',
+				),
+			path: z
+				.string()
+				.optional()
+				.describe('Repository path to search (default: current directory)'),
+			top_k: z
+				.number()
+				.optional()
+				.describe('Number of results to return (default: 5, max: 50)'),
+			chunk_by: z
+				.enum(['symbols', 'lines'])
+				.optional()
+				.describe("Chunking strategy: 'symbols' (default) or 'lines'"),
+			build_index: z
+				.boolean()
+				.optional()
+				.describe('Force rebuild of vector index (default: false)'),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const { query, path, top_k, chunk_by, build_index } = args as {
+				query: string
+				path?: string
+				top_k?: number
+				chunk_by?: 'symbols' | 'lines'
+				build_index?: boolean
+			}
+
+			// Validate semantic search inputs
+			const validation = validateSemanticInputs({ query, path, topK: top_k })
+			if (!validation.valid) {
+				throw new Error(validation.errors.join('; '))
+			}
+
+			const formatStr = format === ResponseFormat.JSON ? 'json' : 'markdown'
+
+			const cmd = [
+				'run',
+				`${__dirname}/../cli.ts`,
+				'search',
+				validation.validated!.query,
+				'--format',
+				formatStr,
+			]
+
+			if (validation.validated!.path) {
+				cmd.push('--path', validation.validated!.path)
+			}
+			cmd.push('--top-k', String(validation.validated!.topK))
+			if (chunk_by) {
+				cmd.push('--chunk-by', chunk_by)
+			}
+			if (build_index) {
+				cmd.push('--build-index')
+			}
+
+			const result = spawnSyncCollect(['bun', ...cmd], {
+				env: { PATH: buildEnhancedPath() },
+			})
+
+			if (result.exitCode !== 0) {
+				throw new Error(result.stderr || 'Semantic search failed')
+			}
+
+			return result.stdout
+		},
+		{
+			toolName: 'kit_semantic',
+			logger: createLoggerAdapter('semantic'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// 5. kit_ast_search - Tree-sitter structural search
+// ============================================================================
+
+tool(
+	'kit_ast_search',
+	{
+		description: `AST pattern search using tree-sitter for structural code matching.
+
+Find code by structure rather than text. More precise than grep for:
+- "async function" - Find all async functions
+- "try catch" - Find try-catch blocks
+- "React hooks" - Find useState/useEffect calls
+- "class extends" - Find class inheritance
+
+Supports TypeScript, JavaScript, and Python.
+
+Two modes:
+- simple (default): Natural language patterns like "async function"
+- pattern: JSON criteria like {"type": "function_declaration", "async": true}`,
+		inputSchema: {
+			pattern: z
+				.string()
+				.describe(
+					'Search pattern. Simple mode: "async function", "try catch". Pattern mode: {"type": "function_declaration"}',
+				),
+			mode: z
+				.enum(['simple', 'pattern'])
+				.optional()
+				.describe(
+					"Search mode: 'simple' (default) for natural language, 'pattern' for JSON criteria",
+				),
+			file_pattern: z
+				.string()
+				.optional()
+				.describe(
+					'File glob pattern to search (default: all supported files). Example: "*.ts"',
+				),
+			path: z
+				.string()
+				.optional()
+				.describe('Repository path to search (default: current directory)'),
+			max_results: z
+				.number()
+				.optional()
+				.describe('Maximum results to return (default: 100)'),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const { pattern, mode, file_pattern, path, max_results } = args as {
+				pattern: string
+				mode?: 'simple' | 'pattern'
+				file_pattern?: string
+				path?: string
+				max_results?: number
+			}
+
+			// Validate AST search inputs
+			const validation = validateAstSearchInputs({
+				pattern,
+				mode,
+				filePattern: file_pattern,
+				path,
+				maxResults: max_results,
+			})
+			if (!validation.valid) {
+				throw new Error(validation.errors.join('; '))
+			}
+
+			const result = await executeAstSearch({
+				pattern: validation.validated!.pattern,
+				mode:
+					validation.validated!.mode === 'pattern'
+						? SearchMode.PATTERN
+						: SearchMode.SIMPLE,
+				filePattern: validation.validated!.filePattern,
+				path: validation.validated!.path,
+				maxResults: validation.validated!.maxResults,
+			})
+
+			if ('error' in result) {
+				throw new Error(
+					`${result.error}${result.hint ? `\nHint: ${result.hint}` : ''}`,
+				)
+			}
+
+			if (format === ResponseFormat.JSON) {
+				return JSON.stringify(result, null, 2)
+			}
+
+			let markdown = `## AST Search Results\n\n`
+			markdown += `**Pattern:** \`${result.pattern}\`\n`
+			markdown += `**Mode:** ${result.mode}\n`
+			markdown += `**Matches:** ${result.count}\n\n`
+
+			if (result.matches.length === 0) {
+				markdown += '_No matches found_\n'
+			} else {
+				for (const match of result.matches) {
+					markdown += `### ${match.file}:${match.line}\n`
+					markdown += `**Node type:** \`${match.nodeType}\`\n`
+					if (match.context.parentFunction) {
+						markdown += `**In function:** \`${match.context.parentFunction}\`\n`
+					}
+					if (match.context.parentClass) {
+						markdown += `**In class:** \`${match.context.parentClass}\`\n`
+					}
+					markdown += `\`\`\`\n${match.text.slice(0, 300)}${match.text.length > 300 ? '...' : ''}\n\`\`\`\n\n`
+				}
+			}
+
+			return markdown
+		},
+		{
+			toolName: 'kit_ast_search',
+			logger: createLoggerAdapter('ast'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// 6. kit_context - Extract enclosing definition around file:line
+// ============================================================================
+
+tool(
+	'kit_context',
+	{
+		description: `Extract the full enclosing definition around a specific line in a file.
+
+Uses Kit CLI to find the complete function/class/method that contains a given line.
+Great for:
+- Getting full context around a line reference
+- Extracting complete function bodies without reading entire files
+- Understanding code surrounding a specific location
+
+Requires Kit CLI v3.0+: uv tool install cased-kit`,
+		inputSchema: {
+			file_path: z
+				.string()
+				.describe(
+					'Relative path to the file within the repository. Example: "src/kit-wrapper.ts"',
+				),
+			line: z.number().describe('Line number to extract context around'),
+			path: z
+				.string()
+				.optional()
+				.describe('Repository path (default: git root or current directory)'),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const { file_path, line, path } = args as {
+				file_path: string
+				line: number
+				path?: string
+			}
+
+			// Validate file_path - no traversal, non-empty
+			const fileTrimmed = file_path.trim()
+			if (!fileTrimmed || fileTrimmed.includes('..')) {
+				throw new Error(
+					'Invalid file_path: cannot be empty or contain path traversal (..)',
+				)
+			}
+			if (line < 1) {
+				throw new Error('line must be a positive integer')
+			}
+
+			// Validate path param if provided
+			if (path) {
+				const pathResult = validatePath(path)
+				if (!pathResult.valid) {
+					throw new Error(pathResult.error!)
+				}
+			}
+
+			const repoPath = path || getGitRoot() || process.cwd()
+
+			const result = spawnSyncCollect(
+				['kit', 'context', repoPath, file_path, String(line)],
+				{
+					env: { PATH: buildEnhancedPath() },
+				},
+			)
+
+			if (result.exitCode !== 0) {
+				throw new Error(
+					result.stderr || `Failed to extract context for ${file_path}:${line}`,
+				)
+			}
+
+			const output = result.stdout.trim()
+
+			if (format === ResponseFormat.JSON) {
+				// Kit context outputs JSON by default
+				try {
+					const parsed = JSON.parse(output)
+					return JSON.stringify(parsed, null, 2)
+				} catch {
+					return JSON.stringify({ context: output, file: file_path, line })
+				}
+			}
+
+			// Markdown format
+			let markdown = `## Context for ${file_path}:${line}\n\n`
+			try {
+				const parsed = JSON.parse(output)
+				if (parsed.context || parsed.code) {
+					const code = parsed.context || parsed.code || output
+					const ext = file_path.split('.').pop() || ''
+					const lang =
+						{ ts: 'typescript', js: 'javascript', py: 'python' }[ext] || ''
+					markdown += `\`\`\`${lang}\n${code}\n\`\`\`\n`
+				} else {
+					markdown += `\`\`\`\n${output}\n\`\`\`\n`
+				}
+			} catch {
+				markdown += `\`\`\`\n${output}\n\`\`\`\n`
+			}
+
+			return markdown
+		},
+		{
+			toolName: 'kit_context',
+			logger: createLoggerAdapter('context'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// 7. kit_chunk - Split file into LLM-friendly chunks
+// ============================================================================
+
+tool(
+	'kit_chunk',
+	{
+		description: `Split a file into LLM-friendly chunks for efficient processing.
+
+Two strategies:
+- symbols (default): Chunk at function/class boundaries (semantic)
+- lines: Chunk by line count (configurable max_lines)
+
+Great for:
+- Processing large files piece by piece
+- Token-efficient file analysis
+- Focused code review on specific sections
+
+Requires Kit CLI v3.0+: uv tool install cased-kit`,
+		inputSchema: {
+			file_path: z
+				.string()
+				.describe(
+					'Relative path to the file within the repository. Example: "src/kit-wrapper.ts"',
+				),
+			strategy: z
+				.enum(['symbols', 'lines'])
+				.optional()
+				.describe(
+					"Chunking strategy: 'symbols' (default, at function boundaries) or 'lines' (by line count)",
+				),
+			max_lines: z
+				.number()
+				.optional()
+				.describe(
+					"Maximum lines per chunk (only for 'lines' strategy, default: 50)",
+				),
+			path: z
+				.string()
+				.optional()
+				.describe('Repository path (default: git root or current directory)'),
+			response_format: z
+				.enum(['markdown', 'json'])
+				.optional()
+				.default('json')
+				.describe("Output format: 'markdown' or 'json' (default)"),
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+		},
+	},
+	wrapToolHandler(
+		async (args, format) => {
+			const {
+				file_path,
+				strategy = 'symbols',
+				max_lines,
+				path,
+			} = args as {
+				file_path: string
+				strategy?: 'symbols' | 'lines'
+				max_lines?: number
+				path?: string
+			}
+
+			// Validate file_path - no traversal, non-empty
+			const fileTrimmed = file_path.trim()
+			if (!fileTrimmed || fileTrimmed.includes('..')) {
+				throw new Error(
+					'Invalid file_path: cannot be empty or contain path traversal (..)',
+				)
+			}
+
+			// Validate max_lines bounds (1-500)
+			if (max_lines !== undefined && (max_lines < 1 || max_lines > 500)) {
+				throw new Error('max_lines must be between 1 and 500')
+			}
+
+			// Validate path param if provided
+			if (path) {
+				const pathResult = validatePath(path)
+				if (!pathResult.valid) {
+					throw new Error(pathResult.error!)
+				}
+			}
+
+			const repoPath = path || getGitRoot() || process.cwd()
+
+			const cmd =
+				strategy === 'symbols'
+					? ['kit', 'chunk-symbols', repoPath, file_path]
+					: ['kit', 'chunk-lines', repoPath, file_path]
+
+			if (strategy === 'lines' && max_lines) {
+				cmd.push('-n', String(max_lines))
+			}
+
+			const result = spawnSyncCollect(cmd, {
+				env: { PATH: buildEnhancedPath() },
+			})
+
+			if (result.exitCode !== 0) {
+				throw new Error(result.stderr || `Failed to chunk ${file_path}`)
+			}
+
+			const output = result.stdout.trim()
+
+			if (format === ResponseFormat.JSON) {
+				try {
+					const parsed = JSON.parse(output)
+					return JSON.stringify(parsed, null, 2)
+				} catch {
+					return JSON.stringify({
+						file: file_path,
+						strategy,
+						chunks: [output],
+					})
+				}
+			}
+
+			// Markdown format
+			let markdown = `## File Chunks: ${file_path}\n\n`
+			markdown += `**Strategy:** ${strategy}\n`
+
+			try {
+				const parsed = JSON.parse(output)
+				const chunks = Array.isArray(parsed)
+					? parsed
+					: parsed.chunks || [parsed]
+				markdown += `**Chunks:** ${chunks.length}\n\n`
+
+				for (let i = 0; i < chunks.length; i++) {
+					const chunk = chunks[i]
+					markdown += `### Chunk ${i + 1}`
+					if (chunk.name || chunk.symbol) {
+						markdown += ` - ${chunk.name || chunk.symbol}`
+					}
+					markdown += '\n'
+					if (chunk.start_line || chunk.startLine) {
+						markdown += `Lines ${chunk.start_line || chunk.startLine}-${chunk.end_line || chunk.endLine}\n`
+					}
+					const code =
+						chunk.content || chunk.code || chunk.text || JSON.stringify(chunk)
+					const ext = file_path.split('.').pop() || ''
+					const lang =
+						{ ts: 'typescript', js: 'javascript', py: 'python' }[ext] || ''
+					markdown += `\`\`\`${lang}\n${code}\n\`\`\`\n\n`
+				}
+			} catch {
+				markdown += `\`\`\`\n${output}\n\`\`\`\n`
+			}
+
+			return markdown
+		},
+		{
+			toolName: 'kit_chunk',
+			logger: createLoggerAdapter('chunk'),
+			createCid: createCorrelationId,
+		},
+	),
+)
+
+// ============================================================================
+// Start Server
+// ============================================================================
+
+if (import.meta.main) {
+	startServer('kit', {
+		version: '1.0.0',
+		fileLogging: {
+			enabled: true,
+			subsystems: [
+				'symbols',
+				'references',
+				'semantic',
+				'ast',
+				'context',
+				'chunk',
+			],
+			level: 'debug',
+		},
+	})
+}

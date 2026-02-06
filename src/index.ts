@@ -1,11 +1,8 @@
 /**
- * Main entry point for the library.
+ * @side-quest/kit
  *
- * Replace this with your actual exports.
+ * Kit CLI integration for intelligent code search - MCP server with 7 tools
+ * for token-efficient codebase navigation.
  */
 
-export function greet(name: string): string {
-	return `Hello, ${name}!`
-}
-
-export const VERSION = '0.0.0'
+export * from './lib/index.js'
