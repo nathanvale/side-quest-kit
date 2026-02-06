@@ -1,41 +1,122 @@
 /**
  * Kit Plugin
  *
- * MCP server integrating Kit CLI for grep, semantic search,
- * and symbol extraction. Provides intelligent code search
+ * MCP server integrating Kit CLI for semantic search,
+ * symbol usages, and AST search. Provides intelligent code search
  * capabilities for the Obsidian vault and other codebases.
  */
 
 // ============================================================================
-// Re-exports
+// Types
 // ============================================================================
 
-export * from './ast/index.js'
-export * from './errors.js'
-export * from './formatters.js'
-export * from './index-tools.js'
-export * from './kit-wrapper.js'
+export type { SupportedLanguage } from './ast/languages.js'
+export type {
+	ASTMatch,
+	ASTMatchContext,
+	ASTSearchOptions,
+	ASTSearchResult,
+	PatternCriteria,
+} from './ast/types.js'
+export { SearchMode } from './ast/types.js'
+export type {
+	ErrorResult,
+	GrepMatch,
+	GrepOptions,
+	GrepResult,
+	KitResult,
+	SemanticMatch,
+	SemanticOptions,
+	SemanticResult,
+	SymbolUsage,
+	UsagesOptions,
+	UsagesResult,
+} from './types.js'
+export { isError, ResponseFormat } from './types.js'
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+export { detectErrorType, KitError, KitErrorType } from './errors.js'
+
+// ============================================================================
+// Functions - Kit Wrapper
+// ============================================================================
+
 export {
-	astLogger,
-	createCorrelationId,
-	fileContentLogger,
-	fileTreeLogger,
-	getAstLogger,
-	getFileContentLogger,
-	getFileTreeLogger,
-	getGrepLogger,
-	getKitLogger,
-	getSemanticLogger,
-	getSymbolsLogger,
-	getUsagesLogger,
-	grepLogger,
-	initLogger,
-	logDir,
-	logFile,
-	logger,
-	semanticLogger,
-	symbolsLogger,
-	usagesLogger,
-} from './logger.js'
-export * from './types.js'
-export * from './validators.js'
+	executeAstSearch,
+	executeKitGrep,
+	executeKitSemantic,
+	executeKitUsages,
+	getKitVersion,
+	isKitInstalled,
+} from './kit-wrapper.js'
+
+// ============================================================================
+// Functions - Index Tools
+// ============================================================================
+
+export {
+	executeIndexFind,
+	executeIndexOverview,
+	executeIndexPrime,
+	formatIndexFindResults,
+	formatIndexOverviewResults,
+	formatIndexPrimeResults,
+	type IndexError,
+	type IndexFindResult,
+	type IndexOverviewResult,
+	type IndexPrimeExistsResult,
+	type IndexPrimeResult,
+	type IndexStatsResult,
+} from './index-tools.js'
+
+// ============================================================================
+// Functions - AST Search
+// ============================================================================
+
+export {
+	ASTPattern,
+	ASTSearcher,
+	detectLanguage,
+	getParser,
+	getSupportedGlob,
+	initParser,
+	isSupported,
+	LANGUAGES,
+	SUPPORTED_LANGUAGES,
+} from './ast/index.js'
+
+// ============================================================================
+// Validators
+// ============================================================================
+
+export {
+	validateAstSearchInputs,
+	validatePath,
+	validateSemanticInputs,
+	validateUsagesInputs,
+} from './validators.js'
+
+// ============================================================================
+// Formatters
+// ============================================================================
+
+export {
+	formatError,
+	formatSemanticResults,
+	formatUsagesResults,
+} from './formatters.js'
+
+// ============================================================================
+// Logger
+// ============================================================================
+
+export { createCorrelationId, initLogger, logger } from './logger.js'
+
+// ============================================================================
+// Utils
+// ============================================================================
+
+export { findGitRoot, findGitRootSync, getTargetDir } from './utils/git.js'

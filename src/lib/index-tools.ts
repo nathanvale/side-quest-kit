@@ -197,12 +197,13 @@ export async function executeIndexOverview(
 // Prime Tool - Generate/refresh index
 // ============================================================================
 
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { getFileAgeHours, getFileSizeMB } from '@side-quest/core/fs'
 import {
 	ensureCommandAvailable,
 	spawnWithTimeout,
 } from '@side-quest/core/spawn'
+import { getTargetDir, INDEX_FILE, MAX_AGE_HOURS } from './utils/git.js'
 
 export interface IndexPrimeResult {
 	success: true
@@ -221,47 +222,6 @@ export interface IndexPrimeExistsResult {
 	symbols: number
 	size: string
 	message: string
-}
-
-const INDEX_FILE = 'PROJECT_INDEX.json'
-const MAX_AGE_HOURS = 24
-
-/**
- * Find git repository root
- */
-async function findGitRoot(): Promise<string | null> {
-	const gitCmd = ensureCommandAvailable('git')
-	const result = await spawnWithTimeout(
-		[gitCmd, 'rev-parse', '--show-toplevel'],
-		10_000,
-	)
-
-	if (result.timedOut || result.exitCode !== 0) {
-		return null
-	}
-
-	if (result.stdout) {
-		return result.stdout.trim()
-	}
-
-	return null
-}
-
-/**
- * Get target directory for indexing
- * Priority: custom path > git root > CWD
- */
-async function getTargetDir(customPath?: string): Promise<string> {
-	if (customPath) {
-		return resolve(customPath)
-	}
-
-	const gitRoot = await findGitRoot()
-	if (gitRoot) {
-		return gitRoot
-	}
-
-	return process.cwd()
 }
 
 /**

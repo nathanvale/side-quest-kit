@@ -2,13 +2,13 @@
 "@side-quest/kit": minor
 ---
 
-Initial release of @side-quest/kit - MCP server with 7 tools for token-efficient codebase navigation.
+Initial release of @side-quest/kit - MCP server with 7 tools for token-efficient codebase navigation via the Kit CLI (cased-kit).
 
-Tools included:
-- `kit_grep` - fast regex search across files
-- `kit_files` - glob-based file discovery
-- `kit_semantic` - semantic code search via embeddings
-- `kit_symbols` - AST-powered symbol extraction
-- `kit_callers` - find callers of a function/method
-- `kit_context` - retrieve file context around a location
-- `kit_index_find` - query the kit index for matches
+MCP Tools:
+- `kit_prime` - Generate/refresh PROJECT_INDEX.json for token-efficient symbol lookup
+- `kit_find` - Symbol lookup and file overview from PROJECT_INDEX.json
+- `kit_references` - Find all references to a symbol (callers + usages)
+- `kit_semantic` - Semantic code search via vector embeddings with grep fallback
+- `kit_ast_search` - Tree-sitter powered structural code search
+- `kit_context` - Extract enclosing definition around a file:line location
+- `kit_chunk` - Split files into LLM-friendly chunks (symbols or lines strategy)

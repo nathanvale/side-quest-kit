@@ -11,6 +11,7 @@
 	"main": "./src/mcp/index.ts",
 	"exports": {
 		".": {
+			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
 		"./package.json": "./package.json"
@@ -18,6 +19,8 @@
 	"files": [
 		"dist/**",
 		"src/mcp/**",
+		"src/lib/**",
+		"src/cli.ts",
 		"README.md",
 		"LICENSE",
 		"CHANGELOG.md"
@@ -48,7 +51,7 @@
 	},
 	"sideEffects": false,
 	"scripts": {
-		"build": "bunx bunup",
+		"build": "bunx bunup --no-dts && bunx tsc -p tsconfig.json",
 		"check": "biome check --write .",
 		"check:publint": "publint",
 		"check:types": "attw --pack",
