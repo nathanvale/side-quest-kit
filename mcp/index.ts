@@ -17,14 +17,11 @@
  * Observability: JSONL file logging to ~/.claude/logs/kit.jsonl
  */
 
+import { createCorrelationId, startServer, tool, z } from '@side-quest/core/mcp'
 import {
-	createCorrelationId,
-	log,
-	startServer,
-	tool,
-	z,
-} from '@side-quest/core/mcp'
-import { wrapToolHandler } from '@side-quest/core/mcp-response'
+	createLoggerAdapter,
+	wrapToolHandler,
+} from '@side-quest/core/mcp-response'
 import { buildEnhancedPath, spawnSyncCollect } from '@side-quest/core/spawn'
 import {
 	executeAstSearch,
@@ -44,29 +41,30 @@ import {
 	validatePath,
 	validateSemanticInputs,
 	validateUsagesInputs,
-} from '../lib/index.js'
-import { findGitRootSync } from '../lib/utils/git.js'
+} from '../src/lib/index.js'
+import {
+	astLogger,
+	chunkLogger,
+	contextLogger,
+	initLogger,
+	referencesLogger,
+	semanticLogger,
+	symbolsLogger,
+} from '../src/lib/logger.js'
+import { findGitRootSync } from '../src/lib/utils/git.js'
 
 // ============================================================================
-// Logger Adapter
+// Logger Init + Adapters
 // ============================================================================
 
-/**
- * Adapter to bridge @side-quest/core/mcp log API to wrapToolHandler Logger interface.
- *
- * wrapToolHandler expects: logger.info(message, properties)
- * @side-quest/core/mcp provides: log.info(properties, subsystem)
- */
-function createLoggerAdapter(subsystem: string) {
-	return {
-		info: (message: string, properties?: Record<string, unknown>) => {
-			log.info({ message, ...properties }, subsystem)
-		},
-		error: (message: string, properties?: Record<string, unknown>) => {
-			log.error({ message, ...properties }, subsystem)
-		},
-	}
-}
+initLogger().catch(console.error)
+
+const symbolsAdapter = createLoggerAdapter(symbolsLogger)
+const referencesAdapter = createLoggerAdapter(referencesLogger)
+const semanticAdapter = createLoggerAdapter(semanticLogger)
+const astAdapter = createLoggerAdapter(astLogger)
+const contextAdapter = createLoggerAdapter(contextLogger)
+const chunkAdapter = createLoggerAdapter(chunkLogger)
 
 // ============================================================================
 // 1. kit_prime - Generate/refresh PROJECT_INDEX.json
@@ -124,7 +122,7 @@ Requires Kit CLI: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_prime',
-			logger: createLoggerAdapter('symbols'),
+			logger: symbolsAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -215,7 +213,7 @@ NOTE: Requires PROJECT_INDEX.json. Run kit_prime first if not present.`,
 		},
 		{
 			toolName: 'kit_find',
-			logger: createLoggerAdapter('symbols'),
+			logger: symbolsAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -432,7 +430,7 @@ Requires Kit CLI: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_references',
-			logger: createLoggerAdapter('references'),
+			logger: referencesAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -530,7 +528,7 @@ To enable: uv tool install 'cased-kit[ml]'`,
 		},
 		{
 			toolName: 'kit_semantic',
-			logger: createLoggerAdapter('semantic'),
+			logger: semanticAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -663,7 +661,7 @@ Two modes:
 		},
 		{
 			toolName: 'kit_ast_search',
-			logger: createLoggerAdapter('ast'),
+			logger: astAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -795,7 +793,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_context',
-			logger: createLoggerAdapter('context'),
+			logger: contextAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -973,7 +971,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_chunk',
-			logger: createLoggerAdapter('chunk'),
+			logger: chunkAdapter,
 			createCid: createCorrelationId,
 		},
 	),
