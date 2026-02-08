@@ -18,6 +18,7 @@ import {
 	spawnSyncCollect,
 } from '@side-quest/core/spawn'
 
+import { safeJsonParse } from '@side-quest/core/utils'
 import {
 	AST_SEARCH_TIMEOUT,
 	ASTSearcher,
@@ -374,10 +375,11 @@ export function executeKitSemantic(
 		}
 
 		// Parse JSON output
-		let rawMatches: RawSemanticMatch[]
-		try {
-			rawMatches = JSON.parse(result.stdout)
-		} catch {
+		const rawMatches = safeJsonParse<RawSemanticMatch[] | null>(
+			result.stdout,
+			null,
+		)
+		if (!rawMatches) {
 			semanticLogger.error('Failed to parse semantic output', {
 				cid,
 				stdout: result.stdout,

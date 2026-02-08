@@ -11,7 +11,7 @@ import type {
 	SemanticResult,
 	UsagesResult,
 } from './types.js'
-import { isError, ResponseFormat } from './types.js'
+import { isError } from './types.js'
 
 // ============================================================================
 // Semantic Formatters
@@ -25,13 +25,13 @@ import { isError, ResponseFormat } from './types.js'
  */
 export function formatSemanticResults(
 	result: KitResult<SemanticResult>,
-	format: ResponseFormat = ResponseFormat.MARKDOWN,
+	format: 'markdown' | 'json' = 'markdown',
 ): string {
 	if (isError(result)) {
 		return formatError(result, format)
 	}
 
-	if (format === ResponseFormat.JSON) {
+	if (format === 'json') {
 		return JSON.stringify(result, null, 2)
 	}
 
@@ -91,9 +91,9 @@ export function formatSemanticResults(
  */
 export function formatError(
 	error: ErrorResult,
-	format: ResponseFormat = ResponseFormat.MARKDOWN,
+	format: 'markdown' | 'json' = 'markdown',
 ): string {
-	if (format === ResponseFormat.JSON) {
+	if (format === 'json') {
 		return JSON.stringify(error, null, 2)
 	}
 
@@ -122,13 +122,13 @@ export function formatError(
  */
 export function formatUsagesResults(
 	result: KitResult<UsagesResult>,
-	format: ResponseFormat = ResponseFormat.MARKDOWN,
+	format: 'markdown' | 'json' = 'markdown',
 ): string {
 	if (isError(result)) {
 		return formatError(result, format)
 	}
 
-	if (format === ResponseFormat.JSON) {
+	if (format === 'json') {
 		return JSON.stringify(result, null, 2)
 	}
 

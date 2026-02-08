@@ -9,12 +9,10 @@
 // ============================================================================
 
 /**
- * Response format options for tool output.
+ * Re-export OutputFormat from core as ResponseFormat for backwards compatibility.
+ * Core's OutputFormat is the canonical enum with identical values ('markdown' | 'json').
  */
-export enum ResponseFormat {
-	MARKDOWN = 'markdown',
-	JSON = 'json',
-}
+export { OutputFormat as ResponseFormat } from '@side-quest/core/formatters'
 
 // ============================================================================
 // Grep Types

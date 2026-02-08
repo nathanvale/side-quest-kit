@@ -313,14 +313,12 @@ export async function executeIndexPrime(
 // Format utilities for MCP responses
 // ============================================================================
 
-import type { ResponseFormat } from './types.js'
-
 /**
  * Format index find results
  */
 export function formatIndexFindResults(
 	result: IndexFindResult | IndexError,
-	format: ResponseFormat,
+	format: 'markdown' | 'json',
 ): string {
 	if ('isError' in result) {
 		return format === 'json'
@@ -354,7 +352,7 @@ export function formatIndexFindResults(
  */
 export function formatIndexStatsResults(
 	result: IndexStatsResult | IndexError,
-	format: ResponseFormat,
+	format: 'markdown' | 'json',
 ): string {
 	if ('isError' in result) {
 		return format === 'json'
@@ -390,7 +388,7 @@ export function formatIndexStatsResults(
  */
 export function formatIndexOverviewResults(
 	result: IndexOverviewResult | IndexError,
-	format: ResponseFormat,
+	format: 'markdown' | 'json',
 ): string {
 	if ('isError' in result) {
 		return format === 'json'
@@ -434,7 +432,7 @@ export function formatIndexOverviewResults(
  */
 export function formatIndexPrimeResults(
 	result: IndexPrimeResult | IndexPrimeExistsResult | IndexError,
-	format: ResponseFormat,
+	format: 'markdown' | 'json',
 ): string {
 	if ('isError' in result) {
 		return format === 'json'
