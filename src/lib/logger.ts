@@ -26,7 +26,16 @@ const {
 	logFile,
 } = createPluginLogger({
 	name: 'kit',
-	subsystems: ['grep', 'semantic', 'usages', 'ast'],
+	subsystems: [
+		'grep',
+		'semantic',
+		'usages',
+		'ast',
+		'symbols',
+		'references',
+		'context',
+		'chunk',
+	],
 })
 
 // ============================================================================
@@ -46,6 +55,18 @@ export const usagesLogger = getSubsystemLogger('usages')
 
 /** AST search subsystem logger */
 export const astLogger = getSubsystemLogger('ast')
+
+/** Symbols subsystem logger */
+export const symbolsLogger = getSubsystemLogger('symbols')
+
+/** References subsystem logger */
+export const referencesLogger = getSubsystemLogger('references')
+
+/** Context subsystem logger */
+export const contextLogger = getSubsystemLogger('context')
+
+/** Chunk subsystem logger */
+export const chunkLogger = getSubsystemLogger('chunk')
 
 // ============================================================================
 // Legacy getter functions (for backwards compatibility)

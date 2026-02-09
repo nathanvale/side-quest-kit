@@ -4,6 +4,7 @@ import {
 	spawnSyncCollect,
 	spawnWithTimeout,
 } from '@side-quest/core/spawn'
+import { validatePathOrDefault } from '@side-quest/core/validation'
 
 /**
  * Find the git repository root directory (async).
@@ -56,6 +57,35 @@ export async function getTargetDir(customPath?: string): Promise<string> {
 	}
 
 	return process.cwd()
+}
+
+type ResolveRepoPathDeps = {
+	validatePath?: (path: string) => Promise<string> | string
+	findGitRoot?: () => string | undefined
+	cwd?: () => string
+}
+
+/**
+ * Resolve repository path for tools that accept repo-root-relative file paths.
+ * Preserves legacy behavior: explicit path is validated, otherwise git root then cwd.
+ *
+ * @param customPath - Optional repository path override from tool input
+ * @param deps - Optional dependency injection for deterministic unit tests
+ * @returns The resolved absolute/validated repository path
+ */
+export async function resolveRepoPath(
+	customPath?: string,
+	deps: ResolveRepoPathDeps = {},
+): Promise<string> {
+	const validatePath = deps.validatePath ?? validatePathOrDefault
+	const findRoot = deps.findGitRoot ?? findGitRootSync
+	const getCwd = deps.cwd ?? (() => process.cwd())
+
+	if (customPath) {
+		return await Promise.resolve(validatePath(customPath))
+	}
+
+	return findRoot() || getCwd()
 }
 
 /**

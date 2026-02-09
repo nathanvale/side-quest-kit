@@ -9,5 +9,5 @@
 		"__tests__/**"
 	],
 	"extends": "./tsconfig.base.json",
-	"include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+	"include": ["src/**/*.ts", "mcp/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
 }

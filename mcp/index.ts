@@ -17,15 +17,15 @@
  * Observability: JSONL file logging to ~/.claude/logs/kit.jsonl
  */
 
+import { getLanguageForExtension } from '@side-quest/core/formatters'
+import { createCorrelationId, startServer, tool, z } from '@side-quest/core/mcp'
 import {
-	createCorrelationId,
-	log,
-	startServer,
-	tool,
-	z,
-} from '@side-quest/core/mcp'
-import { wrapToolHandler } from '@side-quest/core/mcp-response'
+	createLoggerAdapter,
+	ResponseFormat,
+	wrapToolHandler,
+} from '@side-quest/core/mcp-response'
 import { buildEnhancedPath, spawnSyncCollect } from '@side-quest/core/spawn'
+import { safeJsonParse } from '@side-quest/core/utils'
 import {
 	executeAstSearch,
 	executeIndexFind,
@@ -38,35 +38,34 @@ import {
 	formatIndexOverviewResults,
 	formatIndexPrimeResults,
 	formatSemanticResults,
-	ResponseFormat,
+	resolveRepoPath,
 	SearchMode,
 	validateAstSearchInputs,
-	validatePath,
 	validateSemanticInputs,
 	validateUsagesInputs,
-} from '../lib/index.js'
-import { findGitRootSync } from '../lib/utils/git.js'
+} from '../src/lib/index.js'
+import {
+	astLogger,
+	chunkLogger,
+	contextLogger,
+	initLogger,
+	referencesLogger,
+	semanticLogger,
+	symbolsLogger,
+} from '../src/lib/logger.js'
 
 // ============================================================================
-// Logger Adapter
+// Logger Init + Adapters
 // ============================================================================
 
-/**
- * Adapter to bridge @side-quest/core/mcp log API to wrapToolHandler Logger interface.
- *
- * wrapToolHandler expects: logger.info(message, properties)
- * @side-quest/core/mcp provides: log.info(properties, subsystem)
- */
-function createLoggerAdapter(subsystem: string) {
-	return {
-		info: (message: string, properties?: Record<string, unknown>) => {
-			log.info({ message, ...properties }, subsystem)
-		},
-		error: (message: string, properties?: Record<string, unknown>) => {
-			log.error({ message, ...properties }, subsystem)
-		},
-	}
-}
+initLogger().catch(console.error)
+
+const symbolsAdapter = createLoggerAdapter(symbolsLogger)
+const referencesAdapter = createLoggerAdapter(referencesLogger)
+const semanticAdapter = createLoggerAdapter(semanticLogger)
+const astAdapter = createLoggerAdapter(astLogger)
+const contextAdapter = createLoggerAdapter(contextLogger)
+const chunkAdapter = createLoggerAdapter(chunkLogger)
 
 // ============================================================================
 // 1. kit_prime - Generate/refresh PROJECT_INDEX.json
@@ -116,15 +115,11 @@ Requires Kit CLI: uv tool install cased-kit`,
 				throw new Error(result.error)
 			}
 
-			const responseFormat =
-				format === ResponseFormat.JSON
-					? ResponseFormat.JSON
-					: ResponseFormat.MARKDOWN
-			return formatIndexPrimeResults(result, responseFormat)
+			return formatIndexPrimeResults(result, format)
 		},
 		{
 			toolName: 'kit_prime',
-			logger: createLoggerAdapter('symbols'),
+			logger: symbolsAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -192,18 +187,13 @@ NOTE: Requires PROJECT_INDEX.json. Run kit_prime first if not present.`,
 				)
 			}
 
-			const responseFormat =
-				format === ResponseFormat.JSON
-					? ResponseFormat.JSON
-					: ResponseFormat.MARKDOWN
-
 			// File overview mode
 			if (file_path) {
 				const result = await executeIndexOverview(file_path, index_path)
 				if ('isError' in result && result.isError) {
 					throw new Error(result.error)
 				}
-				return formatIndexOverviewResults(result, responseFormat)
+				return formatIndexOverviewResults(result, format)
 			}
 
 			// Symbol lookup mode
@@ -211,11 +201,11 @@ NOTE: Requires PROJECT_INDEX.json. Run kit_prime first if not present.`,
 			if ('isError' in result && result.isError) {
 				throw new Error(result.error)
 			}
-			return formatIndexFindResults(result, responseFormat)
+			return formatIndexFindResults(result, format)
 		},
 		{
 			toolName: 'kit_find',
-			logger: createLoggerAdapter('symbols'),
+			logger: symbolsAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -432,7 +422,7 @@ Requires Kit CLI: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_references',
-			logger: createLoggerAdapter('references'),
+			logger: referencesAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -522,15 +512,11 @@ To enable: uv tool install 'cased-kit[ml]'`,
 			}
 
 			// Format result using existing formatter
-			const responseFormat =
-				format === ResponseFormat.JSON
-					? ResponseFormat.JSON
-					: ResponseFormat.MARKDOWN
-			return formatSemanticResults(result, responseFormat)
+			return formatSemanticResults(result, format)
 		},
 		{
 			toolName: 'kit_semantic',
-			logger: createLoggerAdapter('semantic'),
+			logger: semanticAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -663,7 +649,7 @@ Two modes:
 		},
 		{
 			toolName: 'kit_ast_search',
-			logger: createLoggerAdapter('ast'),
+			logger: astAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -739,15 +725,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				throw new Error('line must be a positive integer')
 			}
 
-			// Validate path param if provided
-			if (path) {
-				const pathResult = validatePath(path)
-				if (!pathResult.valid) {
-					throw new Error(pathResult.error!)
-				}
-			}
-
-			const repoPath = path || findGitRootSync() || process.cwd()
+			const repoPath = await resolveRepoPath(path)
 
 			const result = spawnSyncCollect(
 				['kit', 'context', repoPath, '--', file_path, String(line)],
@@ -766,28 +744,24 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 
 			if (format === ResponseFormat.JSON) {
 				// Kit context outputs JSON by default
-				try {
-					const parsed = JSON.parse(output)
-					return JSON.stringify(parsed, null, 2)
-				} catch {
-					return JSON.stringify({ context: output, file: file_path, line })
-				}
+				const parsed = safeJsonParse<Record<string, unknown> | null>(
+					output,
+					null,
+				)
+				return parsed
+					? JSON.stringify(parsed, null, 2)
+					: JSON.stringify({ context: output, file: file_path, line })
 			}
 
 			// Markdown format
 			let markdown = `## Context for ${file_path}:${line}\n\n`
-			try {
-				const parsed = JSON.parse(output)
-				if (parsed.context || parsed.code) {
-					const code = parsed.context || parsed.code || output
-					const ext = file_path.split('.').pop() || ''
-					const lang =
-						{ ts: 'typescript', js: 'javascript', py: 'python' }[ext] || ''
-					markdown += `\`\`\`${lang}\n${code}\n\`\`\`\n`
-				} else {
-					markdown += `\`\`\`\n${output}\n\`\`\`\n`
-				}
-			} catch {
+			const parsed = safeJsonParse<Record<string, unknown> | null>(output, null)
+			if (parsed && (parsed.context || parsed.code)) {
+				const code = parsed.context || parsed.code || output
+				const ext = file_path.split('.').pop() || ''
+				const lang = getLanguageForExtension(ext)
+				markdown += `\`\`\`${lang}\n${code}\n\`\`\`\n`
+			} else {
 				markdown += `\`\`\`\n${output}\n\`\`\`\n`
 			}
 
@@ -795,7 +769,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_context',
-			logger: createLoggerAdapter('context'),
+			logger: contextAdapter,
 			createCid: createCorrelationId,
 		},
 	),
@@ -893,15 +867,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				throw new Error('max_lines must be between 1 and 500')
 			}
 
-			// Validate path param if provided
-			if (path) {
-				const pathResult = validatePath(path)
-				if (!pathResult.valid) {
-					throw new Error(pathResult.error!)
-				}
-			}
-
-			const repoPath = path || findGitRootSync() || process.cwd()
+			const repoPath = await resolveRepoPath(path)
 
 			let cmd: string[]
 			if (strategy === 'symbols') {
@@ -925,31 +891,32 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 			const output = result.stdout.trim()
 
 			if (format === ResponseFormat.JSON) {
-				try {
-					const parsed = JSON.parse(output)
-					return JSON.stringify(parsed, null, 2)
-				} catch {
-					return JSON.stringify({
-						file: file_path,
-						strategy,
-						chunks: [output],
-					})
-				}
+				const parsed = safeJsonParse<Record<string, unknown> | null>(
+					output,
+					null,
+				)
+				return parsed
+					? JSON.stringify(parsed, null, 2)
+					: JSON.stringify({
+							file: file_path,
+							strategy,
+							chunks: [output],
+						})
 			}
 
 			// Markdown format
 			let markdown = `## File Chunks: ${file_path}\n\n`
 			markdown += `**Strategy:** ${strategy}\n`
 
-			try {
-				const parsed = JSON.parse(output)
-				const chunks = Array.isArray(parsed)
+			// biome-ignore lint/suspicious/noExplicitAny: Kit CLI output is dynamic JSON
+			const parsed = safeJsonParse<any>(output, null)
+			if (parsed) {
+				const chunks: Record<string, unknown>[] = Array.isArray(parsed)
 					? parsed
 					: parsed.chunks || [parsed]
 				markdown += `**Chunks:** ${chunks.length}\n\n`
 
-				for (let i = 0; i < chunks.length; i++) {
-					const chunk = chunks[i]
+				for (const [i, chunk] of chunks.entries()) {
 					markdown += `### Chunk ${i + 1}`
 					if (chunk.name || chunk.symbol) {
 						markdown += ` - ${chunk.name || chunk.symbol}`
@@ -961,11 +928,10 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 					const code =
 						chunk.content || chunk.code || chunk.text || JSON.stringify(chunk)
 					const ext = file_path.split('.').pop() || ''
-					const lang =
-						{ ts: 'typescript', js: 'javascript', py: 'python' }[ext] || ''
+					const lang = getLanguageForExtension(ext)
 					markdown += `\`\`\`${lang}\n${code}\n\`\`\`\n\n`
 				}
-			} catch {
+			} else {
 				markdown += `\`\`\`\n${output}\n\`\`\`\n`
 			}
 
@@ -973,7 +939,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 		},
 		{
 			toolName: 'kit_chunk',
-			logger: createLoggerAdapter('chunk'),
+			logger: chunkAdapter,
 			createCid: createCorrelationId,
 		},
 	),

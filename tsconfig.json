@@ -4,7 +4,7 @@
 		"declaration": true,
 		"declarationMap": true,
 		"outDir": "dist",
-		"rootDir": "./src",
+		"rootDir": ".",
 		"sourceMap": true,
 		"noEmit": false,
 		"allowImportingTsExtensions": false,
@@ -19,5 +19,5 @@
 		"__tests__"
 	],
 	"extends": "./tsconfig.base.json",
-	"include": ["src/**/*.ts"]
+	"include": ["src/**/*.ts", "mcp/**/*.ts"]
 }
