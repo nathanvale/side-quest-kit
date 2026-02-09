@@ -119,4 +119,9 @@ export { createCorrelationId, initLogger, logger } from './logger.js'
 // Utils
 // ============================================================================
 
-export { findGitRoot, findGitRootSync, getTargetDir } from './utils/git.js'
+export {
+	findGitRoot,
+	findGitRootSync,
+	getTargetDir,
+	resolveRepoPath,
+} from './utils/git.js'

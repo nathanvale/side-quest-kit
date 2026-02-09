@@ -26,7 +26,6 @@ import {
 } from '@side-quest/core/mcp-response'
 import { buildEnhancedPath, spawnSyncCollect } from '@side-quest/core/spawn'
 import { safeJsonParse } from '@side-quest/core/utils'
-import { validatePathOrDefault } from '@side-quest/core/validation'
 import {
 	executeAstSearch,
 	executeIndexFind,
@@ -39,6 +38,7 @@ import {
 	formatIndexOverviewResults,
 	formatIndexPrimeResults,
 	formatSemanticResults,
+	resolveRepoPath,
 	SearchMode,
 	validateAstSearchInputs,
 	validateSemanticInputs,
@@ -725,7 +725,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				throw new Error('line must be a positive integer')
 			}
 
-			const repoPath = await validatePathOrDefault(path)
+			const repoPath = await resolveRepoPath(path)
 
 			const result = spawnSyncCollect(
 				['kit', 'context', repoPath, '--', file_path, String(line)],
@@ -867,7 +867,7 @@ Requires Kit CLI v3.0+: uv tool install cased-kit`,
 				throw new Error('max_lines must be between 1 and 500')
 			}
 
-			const repoPath = await validatePathOrDefault(path)
+			const repoPath = await resolveRepoPath(path)
 
 			let cmd: string[]
 			if (strategy === 'symbols') {
