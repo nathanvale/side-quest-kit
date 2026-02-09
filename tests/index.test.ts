@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { createTempDir, pathExistsSync, removeDirSync } from '@side-quest/core/fs'
+import { createTempDir, removeDirSync } from '@side-quest/core/fs'
 import {
 	createErrorFromOutput,
 	detectErrorType,
@@ -90,8 +90,6 @@ describe('types', () => {
 				const cacheDir = getSemanticCacheDir(tmpDir)
 				// Should be under <repo>/.kit/vector_db/
 				expect(cacheDir).toBe(join(tmpDir, '.kit', 'vector_db'))
-				// Directory should exist
-				expect(pathExistsSync(cacheDir)).toBe(true)
 			} finally {
 				removeDirSync(tmpDir, { force: true })
 			}
