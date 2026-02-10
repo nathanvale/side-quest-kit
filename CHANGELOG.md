@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+### Patch Changes
+
+- [#15](https://github.com/nathanvale/side-quest-kit/pull/15) [`edba457`](https://github.com/nathanvale/side-quest-kit/commit/edba45753dbbf1f84d44b14f4f5ffc71e6f92d90) Thanks [@nathanvale](https://github.com/nathanvale)! - fix(deps): bump @side-quest/core to ^0.3.1 and fix flaky CI test
+
+  - Bump @side-quest/core from ^0.1.1 to ^0.3.1 to pick up the fix for Bun-only `exists` import that breaks in non-Bun environments (side-quest-core#29, side-quest-core#31)
+  - Remove `pathExistsSync` assertion from `getSemanticCacheDir` test that failed in CI due to mock leakage from `kit-wrapper.test.ts`
+
 ## 0.2.0
 
 ### Minor Changes
